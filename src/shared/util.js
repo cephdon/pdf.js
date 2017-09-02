@@ -817,7 +817,7 @@ var Util = (function UtilClosure() {
    * @return {string} The resulting Roman number.
    */
   Util.toRoman = function Util_toRoman(number, lowerCase) {
-    assert(isInt(number) && number > 0,
+    assert(Number.isInteger(number) && number > 0,
            'The number should be a positive integer.');
     var pos, romanBuf = [];
     // Thousands
@@ -1075,20 +1075,12 @@ function isBool(v) {
   return typeof v === 'boolean';
 }
 
-function isInt(v) {
-  return typeof v === 'number' && ((v | 0) === v);
-}
-
 function isNum(v) {
   return typeof v === 'number';
 }
 
 function isString(v) {
   return typeof v === 'string';
-}
-
-function isArray(v) {
-  return v instanceof Array;
 }
 
 function isArrayBuffer(v) {
@@ -1247,6 +1239,17 @@ function wrapReason(reason) {
   }
 }
 
+function makeReasonSerializable(reason) {
+  if (!(reason instanceof Error) ||
+      reason instanceof AbortException ||
+      reason instanceof MissingPDFException ||
+      reason instanceof UnexpectedResponseException ||
+      reason instanceof UnknownErrorException) {
+    return reason;
+  }
+  return new UnknownErrorException(reason.message, reason.toString());
+}
+
 function resolveOrReject(capability, success, reason) {
   if (success) {
     capability.resolve();
@@ -1307,16 +1310,12 @@ function MessageHandler(sourceName, targetName, comObj) {
             data: result,
           });
         }, (reason) => {
-          if (reason instanceof Error) {
-            // Serialize error to avoid "DataCloneError"
-            reason = reason + '';
-          }
           comObj.postMessage({
             sourceName,
             targetName,
             isReply: true,
             callbackId: data.callbackId,
-            error: reason,
+            error: makeReasonSerializable(reason),
           });
         });
       } else if (data.streamId) {
@@ -1483,6 +1482,7 @@ MessageHandler.prototype = {
         if (this.isCancelled) {
           return;
         }
+        this.isCancelled = true;
         sendStreamRequest({ stream: 'close', });
         delete self.streamSinks[streamId];
       },
@@ -1691,11 +1691,9 @@ export {
   getLookupTableFactory,
   getVerbosityLevel,
   info,
-  isArray,
   isArrayBuffer,
   isBool,
   isEmptyObj,
-  isInt,
   isNum,
   isString,
   isSpace,

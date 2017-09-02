@@ -18,8 +18,8 @@ import {
   JpegStream, JpxStream, LZWStream, NullStream, PredictorStream, RunLengthStream
 } from './stream';
 import {
-  assert, FormatError, info, isArray, isInt, isNum, isString,
-  MissingDataException, StreamType, warn
+  assert, FormatError, info, isNum, isString, MissingDataException, StreamType,
+  warn
 } from '../shared/util';
 import {
   Cmd, Dict, EOF, isCmd, isDict, isEOF, isName, Name, Ref
@@ -121,9 +121,9 @@ var Parser = (function ParserClosure() {
         }
       }
 
-      if (isInt(buf1)) { // indirect reference or integer
+      if (Number.isInteger(buf1)) { // indirect reference or integer
         var num = buf1;
-        if (isInt(this.buf1) && isCmd(this.buf2, 'R')) {
+        if (Number.isInteger(this.buf1) && isCmd(this.buf2, 'R')) {
           var ref = new Ref(num, this.buf1);
           this.shift();
           this.shift();
@@ -148,7 +148,8 @@ var Parser = (function ParserClosure() {
      * @returns {number} The inline stream length.
      */
     findDefaultInlineStreamEnd(stream) {
-      const E = 0x45, I = 0x49, SPACE = 0x20, LF = 0xA, CR = 0xD, n = 5;
+      const E = 0x45, I = 0x49, SPACE = 0x20, LF = 0xA, CR = 0xD;
+      const n = 10, NUL = 0x0;
       let startPos = stream.pos, state = 0, ch, maybeEIPos;
       while ((ch = stream.getByte()) !== -1) {
         if (state === 0) {
@@ -159,10 +160,23 @@ var Parser = (function ParserClosure() {
           assert(state === 2);
           if (ch === SPACE || ch === LF || ch === CR) {
             maybeEIPos = stream.pos;
-            // Let's check the next `n` bytes are ASCII... just be sure.
+            // Let's check that the next `n` bytes are ASCII... just to be sure.
             let followingBytes = stream.peekBytes(n);
-            for (let i = 0; i < n; i++) {
+            for (let i = 0, ii = followingBytes.length; i < ii; i++) {
               ch = followingBytes[i];
+              if (ch === NUL && followingBytes[i + 1] !== NUL) {
+                // NUL bytes are not supposed to occur *outside* of inline
+                // images, but some PDF generators violate that assumption,
+                // thus breaking the EI detection heuristics used below.
+                //
+                // However, we can't unconditionally treat NUL bytes as "ASCII",
+                // since that *could* result in inline images being truncated.
+                //
+                // To attempt to address this, we'll still treat any *sequence*
+                // of NUL bytes as non-ASCII, but for a *single* NUL byte we'll
+                // continue checking the `followingBytes` (fixes issue8823.pdf).
+                continue;
+              }
               if (ch !== LF && ch !== CR && (ch < SPACE || ch > 0x7F)) {
                 // Not a LF, CR, SPACE or any visible ASCII character, i.e.
                 // it's binary stuff. Resetting the state.
@@ -370,7 +384,7 @@ var Parser = (function ParserClosure() {
       var filter = dict.get('Filter', 'F'), filterName;
       if (isName(filter)) {
         filterName = filter.name;
-      } else if (isArray(filter)) {
+      } else if (Array.isArray(filter)) {
         var filterZero = this.xref.fetchIfRef(filter[0]);
         if (isName(filterZero)) {
           filterName = filterZero.name;
@@ -442,7 +456,7 @@ var Parser = (function ParserClosure() {
 
       // get length
       var length = dict.get('Length');
-      if (!isInt(length)) {
+      if (!Number.isInteger(length)) {
         info('Bad ' + length + ' attribute in stream');
         length = 0;
       }
@@ -513,14 +527,14 @@ var Parser = (function ParserClosure() {
       var filter = dict.get('Filter', 'F');
       var params = dict.get('DecodeParms', 'DP');
       if (isName(filter)) {
-        if (isArray(params)) {
+        if (Array.isArray(params)) {
           params = this.xref.fetchIfRef(params[0]);
         }
         return this.makeFilter(stream, filter.name, length, params);
       }
 
       var maybeLength = length;
-      if (isArray(filter)) {
+      if (Array.isArray(filter)) {
         var filterArray = filter;
         var paramsArray = params;
         for (var i = 0, ii = filterArray.length; i < ii; ++i) {
@@ -530,7 +544,7 @@ var Parser = (function ParserClosure() {
           }
 
           params = null;
-          if (isArray(paramsArray) && (i in paramsArray)) {
+          if (Array.isArray(paramsArray) && (i in paramsArray)) {
             params = this.xref.fetchIfRef(paramsArray[i]);
           }
           stream = this.makeFilter(stream, filter.name, maybeLength, params);
@@ -1055,7 +1069,7 @@ var Linearization = {
   create: function LinearizationCreate(stream) {
     function getInt(name, allowZeroValue) {
       var obj = linDict.get(name);
-      if (isInt(obj) && (allowZeroValue ? obj >= 0 : obj > 0)) {
+      if (Number.isInteger(obj) && (allowZeroValue ? obj >= 0 : obj > 0)) {
         return obj;
       }
       throw new Error('The "' + name + '" parameter in the linearization ' +
@@ -1063,10 +1077,10 @@ var Linearization = {
     }
     function getHints() {
       var hints = linDict.get('H'), hintsLength, item;
-      if (isArray(hints) &&
+      if (Array.isArray(hints) &&
           ((hintsLength = hints.length) === 2 || hintsLength === 4)) {
         for (var index = 0; index < hintsLength; index++) {
-          if (!(isInt(item = hints[index]) && item > 0)) {
+          if (!(Number.isInteger(item = hints[index]) && item > 0)) {
             throw new Error('Hint (' + index +
                             ') in the linearization dictionary is invalid.');
           }
@@ -1081,7 +1095,8 @@ var Linearization = {
     var obj3 = parser.getObj();
     var linDict = parser.getObj();
     var obj, length;
-    if (!(isInt(obj1) && isInt(obj2) && isCmd(obj3, 'obj') && isDict(linDict) &&
+    if (!(Number.isInteger(obj1) && Number.isInteger(obj2) &&
+          isCmd(obj3, 'obj') && isDict(linDict) &&
           isNum(obj = linDict.get('Linearized')) && obj > 0)) {
       return null; // No valid linearization dictionary found.
     } else if ((length = getInt('L')) !== stream.length) {
